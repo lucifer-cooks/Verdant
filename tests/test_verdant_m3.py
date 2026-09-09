@@ -91,9 +91,10 @@ def test_clock_and_climate_stay_consistent():
     state = VerdantWorldState(current_season='spring')
     state.metadata['seed'] = 50
     clock = VerdantSimulationClock(state, simulation_speed=2)
-    clock.advance(3)
+    clock.advance(12000)
 
     climate = VerdantClimateSystem(world_state=state)
     env = climate.get_environment(0, 0, 0)
 
     assert env.season == 'summer'
+    assert state.current_season == 'summer'

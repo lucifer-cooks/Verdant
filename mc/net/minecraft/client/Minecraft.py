@@ -66,6 +66,10 @@ from verdant.world.state import VerdantWorldState
 from verdant.world.clock import VerdantSimulationClock
 from verdant.world.queries import VerdantWorldQueryBoundary
 from verdant.simulation.manager import VerdantSimulationManager
+from verdant.ecology.system import VerdantEcologySystem
+from verdant.creatures.system import VerdantCreatureSystem
+from verdant.ecosystem.system import VerdantEcosystemSystem
+from verdant.feedback.system import VerdantFeedbackSystem
 from verdant.debug import VerdantDebugInfo
 from pyglet import window, app, canvas, clock
 from pyglet import resource, gl, compat_platform
@@ -142,8 +146,16 @@ class Minecraft(window.Window):
         self.verdant_query = VerdantWorldQueryBoundary(self.verdant_world_state)
         self.verdant_clock = VerdantSimulationClock(self.verdant_world_state)
         self.verdant_manager = VerdantSimulationManager(context={'world': self.theWorld})
+        self.verdant_ecology = VerdantEcologySystem(world_state=self.verdant_world_state, clock=self.verdant_clock)
+        self.verdant_creatures = VerdantCreatureSystem(world_state=self.verdant_world_state, clock=self.verdant_clock)
+        self.verdant_ecosystem = VerdantEcosystemSystem(world_state=self.verdant_world_state, clock=self.verdant_clock)
+        self.verdant_feedback = VerdantFeedbackSystem(world_state=self.verdant_world_state, clock=self.verdant_clock)
         self.verdant_debug = VerdantDebugInfo(self.verdant_world_state, self.verdant_clock, self.verdant_manager)
         self.verdant_manager.register(self.verdant_clock)
+        self.verdant_manager.register(self.verdant_ecology)
+        self.verdant_manager.register(self.verdant_creatures)
+        self.verdant_manager.register(self.verdant_ecosystem)
+        self.verdant_manager.register(self.verdant_feedback)
 
         self.push_handlers(self.ksh)
         self.push_handlers(self.msh)
@@ -717,6 +729,10 @@ class Minecraft(window.Window):
             self.verdant_world_state.bind_world(world)
             self.verdant_query.bind_world(world)
             self.verdant_clock.set_world_state(self.verdant_world_state)
+            self.verdant_ecology.bind_world(world)
+            self.verdant_creatures.bind_world(world)
+            self.verdant_ecosystem.bind_world(world)
+            self.verdant_feedback.bind_world(world)
             self.verdant_manager.context = {'world': world}
 
             VerdantHooks.after_world_change(self, world)

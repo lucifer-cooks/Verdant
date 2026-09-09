@@ -120,6 +120,20 @@ class VerdantBiomeResolver:
         self.biome_lookup = {key.lower(): biome for key, biome in self.BIOMES.items()}
 
     def resolve(self, environment) -> VerdantBiomeDefinition:
+        temperature = float(getattr(environment, 'temperature', 20.0))
+        humidity = float(getattr(environment, 'humidity', 0.5))
+        rainfall = float(getattr(environment, 'rainfall', 0.5))
+        water_proximity = float(getattr(environment, 'water_proximity', 0.0))
+
+        if temperature >= 28.0 and humidity <= 0.6 and rainfall <= 0.8 and water_proximity < 0.7:
+            return self.biome_index['Desert']
+        if temperature <= 22.0 and rainfall >= 0.2 and water_proximity >= 0.55:
+            return self.biome_index['Forest']
+        if humidity >= 0.55 and rainfall >= 0.4 and water_proximity >= 0.6:
+            return self.biome_index['Swamp']
+        if temperature <= 8.0 and humidity <= 0.8:
+            return self.biome_index['Snow/Tundra']
+
         matches = [biome for biome in self.biome_index.values() if biome.matches(environment)]
         if not matches:
             return self.biome_index['Plains']

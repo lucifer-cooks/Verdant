@@ -117,6 +117,14 @@ class VerdantWorldQueryBoundary:
     def get_rainfall(self, x: int, y: int, z: int):
         return self.get_environment(x, y, z)['rainfall']
 
+    def get_soil_moisture(self, x: int, y: int, z: int):
+        if self.climate_system is not None:
+            try:
+                return float(self.climate_system.get_environment(x, y, z).soil_moisture)
+            except Exception:
+                pass
+        return float(self.get_environment(x, y, z)['soil_moisture'])
+
     def get_biome(self, x: int, y: int, z: int):
         biome_name = self.get_environment(x, y, z)['biome']
         return biome_name

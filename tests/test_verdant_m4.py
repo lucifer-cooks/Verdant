@@ -89,6 +89,7 @@ def test_vegetation_rules_response_to_environment_inputs():
 
 
 def test_indev_vegetation_apis_remain_usable():
+    from mc.net.minecraft.game.level.World import World
     from mc.net.minecraft.game.level.block.Blocks import blocks
     assert blocks.plantYellow is not None
     assert blocks.plantRed is not None

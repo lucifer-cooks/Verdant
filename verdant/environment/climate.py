@@ -44,6 +44,8 @@ class VerdantClimateSystem(VerdantSystem):
         self.seed = int(seed if seed is not None else (world_state.metadata.get('seed', 0) if world_state else 0))
         self.noise = VerdantWorldSeed(self.seed)
         self.biome_resolver = VerdantBiomeResolver()
+        self.water_system = None
+        self._resolving_water = False
 
     def initialize(self, context=None):
         if self.world_state is not None:
@@ -92,6 +94,17 @@ class VerdantClimateSystem(VerdantSystem):
     def _fertility(self, humidity: float, rainfall: float, temperature: float):
         return max(0.0, min(1.0, 0.5 * humidity + 0.4 * rainfall + (1.0 if 8.0 <= temperature <= 28.0 else 0.0) - 0.2))
 
+    def _resolve_water_system(self):
+        if self.water_system is not None:
+            return self.water_system
+        if self.world_state is not None and getattr(self.world_state, 'world', None) is not None:
+            from verdant.water.system import VerdantWaterSystem
+            self.water_system = VerdantWaterSystem(world_state=self.world_state, climate_system=self)
+            self.water_system.bind_world(self.world_state.world)
+            self.world_state.water_system = self.water_system
+            return self.water_system
+        return None
+
     def get_environment(self, x: int, y: int, z: int):
         season = self.world_state.current_season if self.world_state is not None else 'spring'
         elevation = self.get_elevation(x, y, z)
@@ -103,6 +116,16 @@ class VerdantClimateSystem(VerdantSystem):
         water_proximity = self._water_proximity(x, y, z, elevation)
         wind_strength = self._wind_strength(x, y, z)
         fertility = self._fertility(humidity, rainfall, temperature)
+
+        if not self._resolving_water:
+            water_system = self._resolve_water_system()
+            if water_system is not None:
+                self._resolving_water = True
+                try:
+                    soil_moisture = water_system.get_soil_moisture(x, y, z)
+                    water_proximity = water_system.get_water_proximity(x, y, z)
+                finally:
+                    self._resolving_water = False
 
         sample = type('TempEnv', (), {
             'temperature': temperature,

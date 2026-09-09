@@ -57,6 +57,9 @@ class VerdantSimulationClock(VerdantSystem):
     def get_current_season(self):
         return self.SEASONS[self.season_index % len(self.SEASONS)]
 
+    def get_season_progress(self):
+        return (self.elapsed_ticks % 24000) / 24000.0
+
     def snapshot(self):
         return {
             'elapsed_ticks': self.elapsed_ticks,
