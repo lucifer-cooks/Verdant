@@ -8,6 +8,7 @@ from mc.net.minecraft.client.render.ItemRenderer import ItemRenderer
 from mc.net.minecraft.client.render.RenderBlocks import RenderBlocks
 from mc.net.minecraft.client.render.Tessellator import tessellator
 from mc.net.minecraft.client.RenderHelper import RenderHelper
+from verdant.hooks import VerdantHooks
 from mc.net.minecraft.client.gui.ScaledResolution import ScaledResolution
 from mc.net.minecraft.client.controller.PlayerControllerCreative import PlayerControllerCreative
 from mc.JavaUtils import BufferUtils, Random
@@ -101,6 +102,7 @@ class EntityRenderer:
         gl.glRotatef(cameraPitch, 1.0, 0.0, 0.0)
 
     def updateCameraAndRender(self, alpha):
+        VerdantHooks.before_render(self.__mc, alpha)
         if self.__displayActive and not self.__mc.isActive():
             self.__mc.displayInGameMenu()
 
@@ -127,6 +129,8 @@ class EntityRenderer:
         if self.__mc.currentScreen:
             gl.glClear(gl.GL_DEPTH_BUFFER_BIT)
             self.__mc.currentScreen.drawScreen(xMouse, yMouse, alpha)
+
+        VerdantHooks.after_render(self.__mc, alpha)
 
     def grabLargeScreenshot(self):
         self.__mc.loadingScreen.displayProgressMessage('Grabbing large screenshot')

@@ -61,6 +61,12 @@ from mc.net.minecraft.client.controller.PlayerControllerSP import PlayerControll
 from mc.net.minecraft.client.sound.SoundManager import SoundManager
 from mc.net.minecraft.client.Session import Session
 from mc.JavaUtils import BufferUtils, getMillis
+from verdant.hooks import VerdantHooks
+from verdant.world.state import VerdantWorldState
+from verdant.world.clock import VerdantSimulationClock
+from verdant.world.queries import VerdantWorldQueryBoundary
+from verdant.simulation.manager import VerdantSimulationManager
+from verdant.debug import VerdantDebugInfo
 from pyglet import window, app, canvas, clock
 from pyglet import resource, gl, compat_platform
 
@@ -131,6 +137,13 @@ class Minecraft(window.Window):
         self.__prevFrameTime = 0
 
         self.inGameHasFocus = False
+
+        self.verdant_world_state = VerdantWorldState()
+        self.verdant_query = VerdantWorldQueryBoundary(self.verdant_world_state)
+        self.verdant_clock = VerdantSimulationClock(self.verdant_world_state)
+        self.verdant_manager = VerdantSimulationManager(context={'world': self.theWorld})
+        self.verdant_debug = VerdantDebugInfo(self.verdant_world_state, self.verdant_clock, self.verdant_manager)
+        self.verdant_manager.register(self.verdant_clock)
 
         self.push_handlers(self.ksh)
         self.push_handlers(self.msh)
@@ -584,6 +597,7 @@ class Minecraft(window.Window):
             screen.setWorldAndResolution(self, screenWidth, screenHeight)
 
     def __runTick(self):
+        VerdantHooks.before_world_tick(self.theWorld) if self.theWorld else None
         self.ingameGUI.addChatMessage()
         if not self.isGamePaused and self.theWorld:
             self.playerController.onUpdate()
@@ -640,7 +654,16 @@ class Minecraft(window.Window):
         if not self.isGamePaused:
             self.effectRenderer.updateEffects()
 
+        if self.verdant_world_state is not None:
+            self.verdant_world_state.bind_world(self.theWorld)
+            self.verdant_query.bind_world(self.theWorld)
+            self.verdant_clock.set_world_state(self.verdant_world_state)
+            self.verdant_manager.update(context={'world': self.theWorld}, delta_ticks=1)
+
+        VerdantHooks.after_world_tick(self.theWorld) if self.theWorld else None
+
     def generateLevel(self, size, shape, levelType, theme):
+        VerdantHooks.before_world_generation(self, size, shape, levelType, theme)
         self.setLevel(None)
         gc.collect()
         name = self.session.username if self.session else 'anonymous'
@@ -663,6 +686,7 @@ class Minecraft(window.Window):
         self.setLevel(levelGen.generate(name, width, height, length))
 
     def setLevel(self, world):
+        VerdantHooks.before_world_change(self, world)
         if self.theWorld:
             self.theWorld.setLevel()
 
@@ -689,6 +713,14 @@ class Minecraft(window.Window):
 
             if self.effectRenderer:
                 self.effectRenderer.clearEffects(world)
+
+            self.verdant_world_state.bind_world(world)
+            self.verdant_query.bind_world(world)
+            self.verdant_clock.set_world_state(self.verdant_world_state)
+            self.verdant_manager.context = {'world': world}
+
+            VerdantHooks.after_world_change(self, world)
+            VerdantHooks.after_world_generation(self, world)
 
             self.__textureWaterFX.textureId = 0
             self.__textureLavaFX.textureId = 0

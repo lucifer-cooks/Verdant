@@ -12,6 +12,7 @@ from mc.net.minecraft.game.level.block.tileentity.TileEntityChest import TileEnt
 from mc.net.minecraft.game.level.block.tileentity.TileEntityFurnace import TileEntityFurnace
 from mc.net.minecraft.game.level.block.Blocks import blocks
 from mc.net.minecraft.game.level.World import World
+from verdant.hooks import VerdantHooks
 
 from nbtlib import File
 from nbtlib.tag import Compound, ByteArray, List, String, Byte, Short, Long, Int
@@ -24,6 +25,7 @@ class LevelLoader:
         self.__guiLoading = loadingScreen
 
     def load(self, file):
+        VerdantHooks.before_load(None, file)
         if self.__guiLoading:
             self.__guiLoading.displayProgressMessage('Loading level')
             self.__guiLoading.displayLoadingString('Reading..')
@@ -101,6 +103,7 @@ class LevelLoader:
                 print('Error reading tileentity')
                 print(traceback.format_exc())
 
+        VerdantHooks.after_load(world, file)
         return world
 
     def _loadEntity(self, world, entityId):
@@ -124,6 +127,7 @@ class LevelLoader:
             return EntityPainting(world)
 
     def save(self, world, file):
+        VerdantHooks.before_save(world, file)
         if self.__guiLoading:
             self.__guiLoading.displayProgressMessage('Saving level')
             self.__guiLoading.displayLoadingString('Preparing level..')
@@ -174,3 +178,4 @@ class LevelLoader:
 
         f = File(levelTag, gzipped=True)
         f.save(file)
+        VerdantHooks.after_save(world, file)

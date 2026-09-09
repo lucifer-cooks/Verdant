@@ -305,6 +305,21 @@ cdef class LevelGenerator:
         self.__populateFlowersAndMushrooms(world, blocks.mushroomBrown, 50)
         self.__populateFlowersAndMushrooms(world, blocks.mushroomRed, 50)
 
+        try:
+            from verdant.vegetation.system import VerdantVegetationSystem
+            world.verdant_state = getattr(world, 'verdant_state', None)
+            if world.verdant_state is None:
+                from verdant.world.state import VerdantWorldState
+                world.verdant_state = VerdantWorldState(world=world)
+            seed = getattr(world, 'seed', None)
+            if seed is None:
+                seed = 0
+            system = VerdantVegetationSystem(world_state=world.verdant_state, seed=seed)
+            system.apply_generation_population(world, user_name=userName, population_version=1)
+            world.verdant_vegetation = system
+        except Exception:
+            pass
+
         self.__guiLoading.displayLoadingString('Lighting..')
         for i in range(10000):
             world.updateLighting()
