@@ -1,0 +1,46 @@
+from mc.net.minecraft.game.level.block.Block import Block
+from mc.net.minecraft.game.level.material.Material import Material
+
+class BlockStep(Block):
+
+    def __init__(self, blocks, blockId, half):
+        self.__blockType = half
+        super().__init__(blocks, blockId, 6, Material.rock)
+        if not self.__blockType:
+            self._setBlockBounds(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)
+
+        self.setLightOpacity(255)
+
+    def getBlockTextureFromSide(self, face):
+        return 6 if face <= 1 else 5
+
+    def isOpaqueCube(self):
+        return self.__blockType
+
+    def onNeighborBlockChange(self, world, x, y, z, blockType):
+        if self == self.blocks.stairSingle:
+            pass
+
+    def onBlockAdded(self, world, x, y, z):
+        if self != self.blocks.stairSingle:
+            super().onBlockAdded(world, x, y, z)
+
+        if world.getBlockId(x, y - 1, z) == self.blocks.stairSingle.blockID:
+            world.setBlockWithNotify(x, y, z, 0)
+            world.setBlockWithNotify(x, y - 1, z, self.blocks.stairDouble.blockID)
+
+    def idDropped(self, metadata, random):
+        return self.blocks.stairSingle.blockID
+
+    def renderAsNormalBlock(self):
+        return self.__blockType
+
+    def shouldSideBeRendered(self, world, x, y, z, layer):
+        if layer == 1:
+            return True
+        elif not super().shouldSideBeRendered(world, x, y, z, layer):
+            return False
+        elif layer == 0:
+            return True
+        else:
+            return world.getBlockId(x, y, z) != self.blockID

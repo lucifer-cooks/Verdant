@@ -1,0 +1,2 @@
+class RecipesFood:
+    pass

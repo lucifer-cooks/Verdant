@@ -1,0 +1,720 @@
+import pyglet
+import platform
+import os
+pyglet.options['debug_gl'] = False
+pyglet.options['search_local_libs'] = True
+pyglet.options['audio'] = ('openal', 'silent')
+
+if pyglet.compat_platform == 'win32':
+    os.environ['PATH'] += os.pathsep + os.path.join(os.getcwd(), 'mc', 'lib')
+
+    def load_library(*names, **kwargs):
+        platformNames = kwargs.get('win32', [])
+        if platformNames == 'openal32':
+            if platform.architecture()[0] == '64bit':
+                platformNames = 'soft_oal_64'
+            elif platform.architecture()[0] == '32bit':
+                platformNames = 'soft_oal_32'
+
+            kwargs['win32'] = platformNames
+
+        return pyglet.lib.loader.load_library(*names, **kwargs)
+
+    pyglet.lib.load_library = load_library
+
+pyglet.resource.path = ['../../../resources']
+pyglet.resource.reindex()
+
+from mc.net.minecraft.client import MinecraftError
+from mc.net.minecraft.client.Timer import Timer
+from mc.net.minecraft.client.GameSettings import GameSettings
+from mc.net.minecraft.client.OpenGlCapsChecker import OpenGlCapsChecker
+from mc.net.minecraft.client.LoadingScreenRenderer import LoadingScreenRenderer
+from mc.net.minecraft.game.level.World import World
+from mc.net.minecraft.game.level.block.Blocks import blocks
+from mc.net.minecraft.game.item.Items import items
+from mc.net.minecraft.game.level.generator.LevelGenerator import LevelGenerator
+from mc.net.minecraft.game.entity.EntityLiving import EntityLiving
+from mc.net.minecraft.client.model.ModelBiped import ModelBiped
+from mc.net.minecraft.client.player.EntityPlayerSP import EntityPlayerSP
+from mc.net.minecraft.client.player.MovementInputFromOptions import MovementInputFromOptions
+from mc.net.minecraft.client.GuiMainMenu import GuiMainMenu
+from mc.net.minecraft.client.gui.ScaledResolution import ScaledResolution
+from mc.net.minecraft.client.gui.FontRenderer import FontRenderer
+from mc.net.minecraft.client.gui.GuiErrorScreen import GuiErrorScreen
+from mc.net.minecraft.client.gui.GuiIngameMenu import GuiIngameMenu
+from mc.net.minecraft.client.gui.GuiGameOver import GuiGameOver
+from mc.net.minecraft.client.gui.GuiIngame import GuiIngame
+from mc.net.minecraft.client.gui.container.GuiInventory import GuiInventory
+from mc.net.minecraft.client.effect.EffectRenderer import EffectRenderer
+from mc.net.minecraft.client.render.texture.TextureFlamesFX import TextureFlamesFX
+from mc.net.minecraft.client.render.texture.TextureWaterFlowFX import TextureWaterFlowFX
+from mc.net.minecraft.client.render.texture.TextureWaterFX import TextureWaterFX
+from mc.net.minecraft.client.render.texture.TextureLavaFX import TextureLavaFX
+from mc.net.minecraft.client.render.texture.TextureGearsFX import TextureGearsFX
+from mc.net.minecraft.client.render.RenderGlobal import RenderGlobal
+from mc.net.minecraft.client.render.EntityRenderer import EntityRenderer
+from mc.net.minecraft.client.render.RenderEngine import RenderEngine
+from mc.net.minecraft.client.render.WorldRenderer import WorldRenderer
+from mc.net.minecraft.client.controller.PlayerControllerCreative import PlayerControllerCreative
+from mc.net.minecraft.client.controller.PlayerControllerSP import PlayerControllerSP
+from mc.net.minecraft.client.sound.SoundManager import SoundManager
+from mc.net.minecraft.client.Session import Session
+from mc.JavaUtils import BufferUtils, getMillis
+from pyglet import window, app, canvas, clock
+from pyglet import resource, gl, compat_platform
+
+import traceback
+import math
+import time
+import gzip
+import sys
+import gc
+
+GL_DEBUG = False
+
+class Minecraft(window.Window):
+    VERSION_STRING = 'Minecraft Indev'
+    theWorld = None
+    renderGlobal = None
+    thePlayer = None
+    effectRenderer = None
+
+    minecraftUri = ''
+    loadMapUser = ''
+    loadMapID = 0
+
+    isGamePaused = True
+
+    ingameGUI = None
+    skipRenderWorld = False
+
+    ksh = window.key.KeyStateHandler()
+    msh = window.mouse.MouseStateHandler()
+    mouseX = 0
+    mouseY = 0
+
+    options = None
+
+    def __init__(self, fullscreen, creative, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        ModelBiped(0.0)
+
+        self.__fullscreen = fullscreen
+
+        if creative:
+            self.playerController = PlayerControllerCreative(self)
+        else:
+            self.playerController = PlayerControllerSP(self)
+
+        self.__timer = Timer(20.0)
+        self.session = None
+        self.currentScreen = None
+        self.renderRain = False
+        self.loadingScreen = LoadingScreenRenderer(self)
+        self.entityRenderer = EntityRenderer(self)
+        self.__ticksRan = 0
+        self.objectMouseOver = None
+        self.sndManager = SoundManager()
+        self.__leftClickCounter = 0
+        self.mcDataDir = ''
+
+        self.__serverIp = ''
+
+        self.__textureWaterFX = TextureWaterFX()
+        self.__textureLavaFX = TextureLavaFX()
+
+        self.__active = True
+        self.running = False
+        self.debug = ''
+
+        self.__prevFrameTime = 0
+
+        self.inGameHasFocus = False
+
+        self.push_handlers(self.ksh)
+        self.push_handlers(self.msh)
+
+    def setServer(self, server, port):
+        self.__serverIp = server
+
+    def displayGuiScreen(self, screen):
+        if not isinstance(self.currentScreen, GuiErrorScreen):
+            if self.currentScreen:
+                self.currentScreen.onGuiClosed()
+
+            if not screen and not self.theWorld:
+                screen = GuiMainMenu()
+            elif not screen and self.thePlayer.health <= 0:
+                screen = GuiGameOver()
+
+            self.currentScreen = screen
+            if screen:
+                self.setIngameNotInFocus()
+                scaledRes = ScaledResolution(self.width, self.height)
+                screenWidth = scaledRes.getScaledWidth()
+                screenHeight = scaledRes.getScaledHeight()
+                screen.setWorldAndResolution(self, screenWidth, screenHeight)
+                self.skipRenderWorld = False
+            else:
+                self.setIngameFocus()
+        else:
+            self.setIngameNotInFocus()
+
+    def destroy(self):
+        self.sndManager.closeMinecraft()
+
+    def isActive(self):
+        return self.__active
+
+    def on_close(self):
+        self.running = False
+
+    def on_activate(self):
+        self.__active = True
+
+        # Remove this hack when the window boundary issue is fixed upstream:
+        if self.inGameHasFocus and compat_platform == 'win32':
+            self._update_clipped_cursor()
+
+    def on_deactivate(self):
+        self.__active = False
+        self.setIngameNotInFocus()
+
+    def on_mouse_press(self, x, y, button, modifiers):
+        try:
+            if self.currentScreen:
+                self.currentScreen.handleMouseInput(button)
+                return
+
+            if not self.inGameHasFocus:
+                self.setIngameFocus()
+            elif button == window.mouse.LEFT:
+                self.__clickMouse(0)
+                self.__prevFrameTime = self.__ticksRan
+            elif button == window.mouse.RIGHT:
+                self.__clickMouse(1)
+                self.__prevFrameTime = self.__ticksRan
+            elif button == window.mouse.MIDDLE and self.objectMouseOver:
+                block = self.theWorld.getBlockId(self.objectMouseOver.blockX,
+                                                 self.objectMouseOver.blockY,
+                                                 self.objectMouseOver.blockZ)
+                if block == blocks.grass.blockID:
+                    block = blocks.dirt.blockID
+                elif block == blocks.stairDouble.blockID:
+                    block = blocks.stairSingle.blockID
+                elif block == blocks.bedrock.blockID:
+                    block = blocks.stone.blockID
+
+                self.thePlayer.inventory.getFirstEmptyStack(block)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_mouse_scroll(self, x, y, dx, dy):
+        try:
+            if not self.currentScreen or self.currentScreen.allowUserInput:
+                if dy != 0:
+                    self.thePlayer.inventory.swapPaint(dy)
+        except Exception as e:
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_mouse_motion(self, x, y, dx, dy):
+        try:
+            self.mouseX = x
+            self.mouseY = y
+            if not self.inGameHasFocus:
+                return
+
+            xo = dx
+            if self.options.invertMouse:
+                yo = dy * -1
+            else:
+                yo = dy
+
+            self.thePlayer.turn(xo, yo)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_key_press(self, symbol, modifiers):
+        try:
+            if symbol == window.key.F11:
+                self.toggleFullscreen()
+                return
+
+            if self.currentScreen:
+                self.currentScreen.handleKeyboardEvent(key=symbol)
+            elif not self.currentScreen or self.currentScreen.allowUserInput:
+                self.thePlayer.movementInput.checkKeyForMovementInput(symbol, True)
+
+                if symbol == window.key.ESCAPE:
+                    self.displayInGameMenu()
+                elif symbol == window.key.F7:
+                    self.entityRenderer.grabLargeScreenshot()
+                elif symbol == window.key.F5:
+                    self.options.thirdPersonView = not self.options.thirdPersonView
+                elif symbol == self.options.keyBindInventory.keyCode:
+                    self.displayGuiScreen(GuiInventory(self.thePlayer.inventory))
+                elif symbol == self.options.keyBindDrop.keyCode:
+                    self.thePlayer.dropPlayerItemWithRandomChoice(
+                        self.thePlayer.inventory.decrStackSize(
+                            self.thePlayer.inventory.currentItem, 1
+                        ), False
+                    )
+
+                if isinstance(self.playerController, PlayerControllerCreative):
+                    if symbol == self.options.keyBindLoad.keyCode:
+                        self.thePlayer.preparePlayerToSpawn()
+                    elif symbol == self.options.keyBindSave.keyCode:
+                        self.theWorld.setSpawnLocation(int(self.thePlayer.posX),
+                                                       int(self.thePlayer.posY),
+                                                       int(self.thePlayer.posZ),
+                                                       self.thePlayer.rotationYaw)
+                        self.thePlayer.preparePlayerToSpawn()
+
+                for i in range(9):
+                    if symbol == getattr(window.key, '_' + str(i + 1)):
+                        self.thePlayer.inventory.currentItem = i
+
+                if symbol == self.options.keyBindToggleFog.keyCode:
+                    shift = modifiers & window.key.MOD_SHIFT
+                    self.options.setOptionValue(4, -1 if shift else 1)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_key_release(self, symbol, modifiers):
+        try:
+            if not self.currentScreen or self.currentScreen.allowUserInput:
+                self.thePlayer.movementInput.checkKeyForMovementInput(symbol, False)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_text(self, text):
+        try:
+            if self.currentScreen:
+                self.currentScreen.handleKeyboardEvent(char=text)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_text_motion(self, motion):
+        try:
+            if self.currentScreen:
+                self.currentScreen.handleKeyboardEvent(motion=motion)
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def on_draw(self):
+        try:
+            if self.theWorld:
+                self.theWorld.updateLighting()
+
+            if self.isGamePaused:
+                prevTicks = self.__timer.renderPartialTicks
+                self.__timer.updateTimer()
+                self.__timer.renderPartialTicks = prevTicks
+            else:
+                self.__timer.updateTimer()
+
+            for i in range(self.__timer.elapsedTicks):
+                self.__ticksRan += 1
+                self.__runTick()
+
+            self.sndManager.setListener(self.thePlayer, self.__timer.renderPartialTicks)
+            gl.glEnable(gl.GL_TEXTURE_2D)
+
+            self.playerController.setPartialTime(self.__timer.renderPartialTicks)
+            self.entityRenderer.updateCameraAndRender(self.__timer.renderPartialTicks)
+            if self.options.limitFramerate:
+                time.sleep(0.005)
+
+            self.isGamePaused = self.currentScreen is not None and \
+                                self.currentScreen.doesGuiPauseGame()
+        except RuntimeError as e:
+            raise e
+        except Exception as e:
+            print(traceback.format_exc())
+            self.displayGuiScreen(GuiErrorScreen('Client error', 'The game broke! [' + str(e) + ']'))
+
+    def run(self):
+        self.running = True
+        self.__dummyWorldRenderer = WorldRenderer(None, 0, 0, 0, 0, 0, True)
+
+        self.set_fullscreen(self.__fullscreen)
+        self.set_visible(True)
+
+        if not self.__fullscreen:
+            display = canvas.Display()
+            screen = display.get_default_screen()
+            locationX = screen.width // 2 - self.width // 2
+            locationY = screen.height // 2 - self.height // 2
+            self.set_location(locationX, locationY)
+
+        self.set_icon(resource.image('icon/minecraft.png'))
+
+        print('Pyglet version:', pyglet.version)
+        print('GL RENDERER:', gl.gl_info.get_renderer())
+        print('GL VENDOR:', gl.gl_info.get_vendor())
+        print('GL VERSION:', gl.gl_info.get_version())
+        print('OpenGL 3.0:', gl.gl_info.have_version(3, 0))
+        print('OpenGL 3.1:', gl.gl_info.have_version(3, 1))
+        print('OpenGL 3.2:', gl.gl_info.have_version(3, 2))
+        print('ARB_compatibility:', gl.gl_info.have_extension('GL_ARB_compatibility'))
+        if gl.gl_info.have_version(3, 2):
+            prof = gl.GLint()
+            gl.glGetIntegerv(gl.GL_CONTEXT_PROFILE_MASK, prof)
+            val = prof.value
+            print('PROFILE MASK:', format(val, 'b'))
+            print('CORE PROFILE:', ((val & 1) != 0))
+            print('COMPATIBILITY PROFILE:', ((val & 2) != 0))
+
+        gl.glEnable(gl.GL_TEXTURE_2D)
+        gl.glShadeModel(gl.GL_SMOOTH)
+        gl.glClearDepth(1.0)
+        gl.glEnable(gl.GL_DEPTH_TEST)
+        gl.glDepthFunc(gl.GL_LEQUAL)
+        gl.glEnable(gl.GL_ALPHA_TEST)
+        gl.glAlphaFunc(gl.GL_GREATER, 0.1)
+        gl.glCullFace(gl.GL_BACK)
+
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
+        gl.glMatrixMode(gl.GL_MODELVIEW)
+
+        self.__glCapabilities = OpenGlCapsChecker()
+
+        name = 'minecraft'
+        home = os.path.expanduser('~') or '.'
+        if 'unix' in sys.platform or 'linux' in sys.platform or \
+           'solaris' in sys.platform or 'sunos' in sys.platform:
+            file = os.path.join(home, '.' + name)
+        elif 'win' in sys.platform:
+            if 'APPDATA' in os.environ:
+                file = os.path.join(os.environ['APPDATA'], '.' + name)
+            else:
+                file = os.path.join(home, '.' + name)
+        elif 'mac' in sys.platform or 'darwin' in sys.platform:
+            file = os.path.join(home, 'Library', 'Application Support', name)
+        else:
+            file = os.path.join(home, name)
+
+        if not os.path.isdir(file):
+            os.mkdir(file)
+
+        if not os.path.isdir(file):
+            raise RuntimeError(f'The working directory could not be created: {file}')
+
+        self.mcDataDir = file
+        self.options = GameSettings(self, self.mcDataDir)
+        self.sndManager.loadSoundSettings(self.options)
+
+        self.renderEngine = RenderEngine(self.options)
+        self.renderEngine.registerTextureFX(self.__textureLavaFX)
+        self.renderEngine.registerTextureFX(self.__textureWaterFX)
+        self.renderEngine.registerTextureFX(TextureWaterFlowFX())
+        self.renderEngine.registerTextureFX(TextureFlamesFX(0))
+        self.renderEngine.registerTextureFX(TextureFlamesFX(1))
+        self.renderEngine.registerTextureFX(TextureGearsFX(0))
+        self.renderEngine.registerTextureFX(TextureGearsFX(1))
+        self.fontRenderer = FontRenderer(self.options, 'default.png', self.renderEngine)
+
+        imgData = BufferUtils.createIntBuffer(256)
+        imgData.clear().limit(256)
+
+        self.renderGlobal = RenderGlobal(self, self.renderEngine)
+
+        #gl.glViewport(0, 0, self.width, self.height)
+
+        if self.__serverIp and self.session:
+            level = World()
+            world.setLevel(8, 8, 8, bytearray(512), bytearray(512))
+            self.setLevel(level)
+        elif not self.theWorld:
+            self.displayGuiScreen(GuiMainMenu())
+
+        self.effectRenderer = EffectRenderer(self.theWorld, self.renderEngine)
+        self.ingameGUI = GuiIngame(self)
+        app.platform_event_loop.start()
+
+        lastTime = getMillis()
+        frames = 0
+        try:
+            while self.running:
+                clock.tick()
+                self.dispatch_events()
+                self.dispatch_event('on_draw')
+                if pyglet.compat_platform == 'win32':
+                    app.platform_event_loop.step(timeout=0)
+                else:
+                    app.platform_event_loop.step(timeout=0.001)
+                self.flip()
+
+                frames += 1
+                while getMillis() >= lastTime + 1000:
+                    self.debug = str(frames) + ' fps, ' + str(self.__dummyWorldRenderer.chunksUpdates) + ' chunk updates'
+                    self.__dummyWorldRenderer.chunksUpdates = 0
+                    lastTime += 1000
+                    frames = 0
+        except MinecraftError:
+            pass
+        finally:
+            app.platform_event_loop.stop()
+            self.destroy()
+
+    def setIngameFocus(self):
+        if not self.isActive() or self.inGameHasFocus:
+            return
+
+        self.inGameHasFocus = True
+        self.set_exclusive_mouse(True)
+        self.displayGuiScreen(None)
+        self.__prevFrameTime = self.__ticksRan + 10000
+
+    def setIngameNotInFocus(self):
+        if not self.inGameHasFocus:
+            return
+
+        if self.thePlayer:
+            self.thePlayer.movementInput.resetKeyState()
+
+        self.inGameHasFocus = False
+        self.set_exclusive_mouse(False)
+        self.set_mouse_position(self.width // 2, self.height // 2)
+
+    def displayInGameMenu(self):
+        if not self.currentScreen:
+            self.displayGuiScreen(GuiIngameMenu())
+
+    def __clickMouse(self, editMode):
+        if editMode == 0 and self.__leftClickCounter > 0:
+            return
+
+        item = self.thePlayer.inventory.getCurrentItem()
+        if editMode == 0:
+            self.entityRenderer.itemRenderer.swingItem()
+            self.entityRenderer.updateRenderer()
+        elif editMode == 1 and item:
+            size = item.stackSize
+            stack = item.getItem().onItemRightClick(item, self.theWorld, self.thePlayer)
+            if stack != item or stack and stack.stackSize != size:
+                self.thePlayer.inventory.mainInventory[self.thePlayer.inventory.currentItem] = stack
+                self.entityRenderer.itemRenderer.resetEquippedProgress()
+                if stack.stackSize == 0:
+                    self.thePlayer.inventory.mainInventory[self.thePlayer.inventory.currentItem] = None
+
+        if not self.objectMouseOver:
+            if editMode == 0 and not isinstance(self.playerController, PlayerControllerCreative):
+                self.__leftClickCounter = 10
+
+            return
+        elif self.objectMouseOver.typeOfHit == 1:
+            if editMode == 0:
+                stack = self.thePlayer.inventory.getStackInSlot(self.thePlayer.inventory.currentItem)
+                damage = items.itemsList[stack.itemID].getDamageVsEntity() if stack else 1
+                if damage > 0:
+                    self.objectMouseOver.entityHit.attackEntityFrom(self.thePlayer,
+                                                                    damage)
+                    item = self.thePlayer.inventory.getCurrentItem()
+                    if item and isinstance(self.objectMouseOver.entityHit, EntityLiving):
+                        items.itemsList[item.itemID].hitEntity(item)
+                        if item.stackSize <= 0:
+                            self.thePlayer.destroyCurrentEquippedItem()
+
+            return
+        elif self.objectMouseOver.typeOfHit != 0:
+            return
+
+        x = self.objectMouseOver.blockX
+        y = self.objectMouseOver.blockY
+        z = self.objectMouseOver.blockZ
+        sideHit = self.objectMouseOver.sideHit
+        block = blocks.blocksList[self.theWorld.getBlockId(x, y, z)]
+        if editMode == 0:
+            self.theWorld.extinguishFire(x, y, z, sideHit)
+            if block != blocks.bedrock:
+                self.playerController.clickBlock(x, y, z)
+        else:
+            item = self.thePlayer.inventory.getCurrentItem()
+            blockId = self.theWorld.getBlockId(x, y, z)
+            if blockId > 0 and \
+               blocks.blocksList[blockId].blockActivated(self.theWorld, x, y, z,
+                                                         self.thePlayer):
+                return
+
+            if item is None:
+                return
+
+            prevSize = item.stackSize
+            if item.getItem().onItemUse(item, self.theWorld, x, y, z, sideHit):
+                self.entityRenderer.itemRenderer.swingItem()
+
+            if item.stackSize == 0:
+                self.thePlayer.inventory.mainInventory[self.thePlayer.inventory.currentItem] = None
+                return
+
+            if item.stackSize != prevSize:
+                self.entityRenderer.itemRenderer.resetEquippedProgress()
+
+    def toggleFullscreen(self):
+        try:
+            self.__fullscreen = not self.__fullscreen
+            print('Toggle fullscreen!')
+            self.setIngameNotInFocus()
+            self.set_fullscreen(self.__fullscreen)
+            time.sleep(1)
+            if self.__fullscreen:
+                self.setIngameFocus()
+
+            if self.currentScreen:
+                self.setIngameNotInFocus()
+                self.__resize(self.width, self.height)
+
+            print(f'Size: {self.width}, {self.height}')
+        except:
+            print(traceback.format_exc())
+
+    def __resize(self, width, height):
+        if self.currentScreen:
+            screenWidth = width * 240 // height
+            screenHeight = height * 240 // height
+            screen.setWorldAndResolution(self, screenWidth, screenHeight)
+
+    def __runTick(self):
+        self.ingameGUI.addChatMessage()
+        if not self.isGamePaused and self.theWorld:
+            self.playerController.onUpdate()
+
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.renderEngine.getTexture('terrain.png'))
+        if not self.isGamePaused:
+            self.renderEngine.updateDynamicTextures()
+
+        if not self.currentScreen and self.thePlayer and self.thePlayer.health <= 0:
+            self.displayGuiScreen(None)
+        if not self.currentScreen or self.currentScreen.allowUserInput:
+            if self.__leftClickCounter > 0:
+                self.__leftClickCounter -= 1
+
+            if not self.currentScreen:
+                if self.msh[window.mouse.LEFT] and \
+                   self.__ticksRan - self.__prevFrameTime >= self.__timer.ticksPerSecond / 4.0 and self.inGameHasFocus:
+                    self.__clickMouse(0)
+                    self.__prevFrameTime = self.__ticksRan
+                elif self.msh[window.mouse.RIGHT] and \
+                     self.__ticksRan - self.__prevFrameTime >= self.__timer.ticksPerSecond / 4.0 and self.inGameHasFocus:
+                    self.__clickMouse(1)
+                    self.__prevFrameTime = self.__ticksRan
+
+            leftHeld = not self.currentScreen and self.msh[window.mouse.LEFT] and self.inGameHasFocus
+            if not self.playerController.isInTestMode and self.__leftClickCounter <= 0:
+                if leftHeld and self.objectMouseOver and self.objectMouseOver.typeOfHit == 0:
+                    x = self.objectMouseOver.blockX
+                    y = self.objectMouseOver.blockY
+                    z = self.objectMouseOver.blockZ
+                    self.playerController.sendBlockRemoving(x, y, z, self.objectMouseOver.sideHit)
+                    self.effectRenderer.addBlockHitEffects(x, y, z, self.objectMouseOver.sideHit)
+                else:
+                    self.playerController.resetBlockRemoving()
+        else:
+            self.__prevFrameTime = self.__ticksRan + 10000
+            self.currentScreen.updateScreen()
+
+        if not self.theWorld:
+            return
+
+        self.theWorld.difficultySetting = self.options.difficulty
+        if not self.isGamePaused:
+            self.entityRenderer.updateRenderer()
+        if not self.isGamePaused:
+            self.renderGlobal.updateClouds()
+        if not self.isGamePaused:
+            self.theWorld.updateEntities()
+            self.theWorld.tick()
+        if not self.isGamePaused:
+            self.theWorld.randomDisplayUpdates(int(self.thePlayer.posX),
+                                               int(self.thePlayer.posY),
+                                               int(self.thePlayer.posZ))
+        if not self.isGamePaused:
+            self.effectRenderer.updateEffects()
+
+    def generateLevel(self, size, shape, levelType, theme):
+        self.setLevel(None)
+        gc.collect()
+        name = self.session.username if self.session else 'anonymous'
+        levelGen = LevelGenerator(self.loadingScreen)
+        levelGen.islandGen = levelType == 1
+        levelGen.floatingGen = levelType == 2
+        levelGen.flatGen = levelType == 3
+        levelGen.levelType = theme
+        width = 128 << size
+        height = width
+        length = 64
+        if shape == 1:
+            width //= 2
+            height <<= 1
+        elif shape == 2:
+            width //= 2
+            height = width
+            length = 256
+
+        self.setLevel(levelGen.generate(name, width, height, length))
+
+    def setLevel(self, world):
+        if self.theWorld:
+            self.theWorld.setLevel()
+
+        self.theWorld = world
+        if world:
+            world.load()
+            self.playerController.onWorldChange(world)
+            self.thePlayer = world.findSubclassOf(EntityPlayerSP)
+            world.playerEntity = self.thePlayer
+
+            if not self.thePlayer:
+                self.thePlayer = EntityPlayerSP(self, world, self.session)
+                self.thePlayer.preparePlayerToSpawn()
+                if world:
+                    world.spawnEntityInWorld(self.thePlayer)
+                    world.playerEntity = self.thePlayer
+
+            if self.thePlayer:
+                self.thePlayer.movementInput = MovementInputFromOptions(self.options)
+                self.playerController.onRespawn(self.thePlayer)
+
+            if self.renderGlobal:
+                self.renderGlobal.changeWorld(world)
+
+            if self.effectRenderer:
+                self.effectRenderer.clearEffects(world)
+
+            self.__textureWaterFX.textureId = 0
+            self.__textureLavaFX.textureId = 0
+            tex = self.renderEngine.getTexture('water.png')
+            if world.defaultFluid == blocks.waterMoving.blockID:
+                self.__textureWaterFX.textureId = tex
+            else:
+                self.__textureLavaFX.textureId = tex
+
+        gc.collect()
+
+if __name__ == '__main__':
+    fullscreen = False
+    server = None
+    port = None
+    name = 'guest'
+    sessionId = ''
+    creative = False
+    for i, arg in enumerate(sys.argv):
+        if arg == '-fullscreen':
+            fullscreen = True
+        elif arg == '-creative':
+            creative = True
+
+    game = Minecraft(fullscreen, creative, width=854, height=480,
+                     resizable=True, vsync=False, visible=False,
+                     caption='Minecraft Indev')
+    game.session = Session(name, sessionId)
+    game.run()

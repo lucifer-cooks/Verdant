@@ -1,0 +1,31 @@
+from mc.net.minecraft.game.level.block.Block import Block
+from mc.net.minecraft.game.level.material.Material import Material
+
+class BlockGrass(Block):
+
+    def __init__(self, blocks, blockId):
+        super().__init__(blocks, 2, Material.ground)
+        self.blockIndexInTexture = 3
+        self._setTickOnLoad(True)
+
+    def getBlockTextureFromSide(self, face):
+        if face == 1: return 0
+        if face == 0: return 2
+        return 3
+
+    def updateTick(self, world, x, y, z, random):
+        if world.getBlockLightValue(x, y + 1, z) < 4 and \
+           world.getBlockMaterial(x, y + 1, z).getCanBlockGrass():
+            if random.nextInt(4) == 0:
+                world.setBlockWithNotify(x, y, z, self.blocks.dirt.blockID)
+        elif world.getBlockLightValue(x, y + 1, z) >= 9:
+            xt = x + random.nextInt(3) - 1
+            yt = y + random.nextInt(5) - 3
+            zt = z + random.nextInt(3) - 1
+            if world.getBlockId(xt, yt, zt) == self.blocks.dirt.blockID and \
+               world.getBlockLightValue(xt, yt + 1, zt) >= 4 and not \
+               world.getBlockMaterial(x, y + 1, z).getCanBlockGrass():
+                world.setBlockWithNotify(xt, yt, zt, self.blocks.grass.blockID)
+
+    def idDropped(self, metadata, random):
+        return self.blocks.dirt.idDropped(0, random)

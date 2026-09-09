@@ -1,0 +1,16 @@
+dist
+build
+minecraft_python.egg-info
+*.pyc
+*.pyd
+*.dat
+*.bat
+!start server.bat
+*.log
+*.html
+*.prof
+*.c
+*.h
+.DS_Store
+*.so
+*.mclevel

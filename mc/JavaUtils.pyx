@@ -1,0 +1,649 @@
+# cython: language_level=3
+# cython: cdivision=True, boundscheck=False, wraparound=False, nonecheck=False
+
+cimport cython
+
+from libc.string cimport memcpy
+from libc.math cimport sqrt, log
+
+from pyglet import gl
+
+import ctypes
+import time
+
+import numpy as np
+cimport numpy as np
+
+cpdef unsigned long long getMillis():
+    return <unsigned long long>(time.time() * 1000)
+
+cdef double signum(double val):
+    return (0 < val) - (val < 0)
+
+cdef unsigned int floatToRawIntBits(float x):
+    cdef unsigned int y = 0
+    memcpy(&y, &x, 4)
+    return y
+
+cdef class Random:
+
+    def __init__(self, long long seed = -1):
+        self.setSeed(seed if seed != -1 else time.perf_counter_ns())
+        self.__haveNextNextGaussian = False
+
+    def setSeed(self, long long seed):
+        self.__seed = (seed ^ 0x5DEECE66D) & ((1 << 48) - 1)
+
+    cdef int _next(self, int bits):
+        self.__seed = (self.__seed * 0x5DEECE66D + 0xB) & ((1 << 48) - 1)
+        return <int>(self.__seed >> (48 - bits))
+
+    cpdef int nextInt(self, int limit = 0):
+        cdef int bits, val
+
+        if not limit:
+            return self._next(32)
+
+        if limit <= 0:
+            raise ValueError('limit must be a positive integer')
+
+        if limit & -limit == limit:
+            return <int>((limit * <unsigned long long>self._next(31)) >> 31)
+
+        val = 0
+        while True:
+            bits = self._next(31)
+            val = bits % limit
+            if bits - val + (limit - 1) >= 0:
+                break
+
+        return val
+
+    cpdef float nextFloat(self):
+        return self._next(24) / <float>(1 << 24)
+
+    cdef double nextDouble(self):
+        cdef unsigned long long l = (<unsigned long long>(self._next(26)) << 27) + self._next(27)
+        return l / <double>(1 << 53)
+
+    cpdef double nextGaussian(self):
+        cdef double v1, v2, s, multiplier
+        if not self.__haveNextNextGaussian:
+            s = 0
+            while s >= 1 or s == 0:
+                v1 = 2 * self.nextDouble() - 1
+                v2 = 2 * self.nextDouble() - 1
+                s = v1 * v1 + v2 * v2
+
+            multiplier = sqrt(-2 * log(s) / s)
+            self.__nextNextGaussian = v2 * multiplier
+            self.__haveNextNextGaussian = True
+            return v1 * multiplier
+        else:
+            self.__haveNextNextGaussian = False
+            return self.__nextNextGaussian
+
+cdef Random rand = Random()
+
+cpdef double random():
+    return rand.nextDouble()
+
+cdef class Bits:
+
+    cdef long makeLong(self, unsigned char b7, unsigned char b6, unsigned char b5,
+                       unsigned char b4, unsigned char b3, unsigned char b2,
+                       unsigned char b1, unsigned char b0):
+        return ((b7       ) << 56) | \
+               ((b6 & 0xFF) << 48) | \
+               ((b5 & 0xFF) << 40) | \
+               ((b4 & 0xFF) << 32) | \
+               ((b3 & 0xFF) << 24) | \
+               ((b2 & 0xFF) << 16) | \
+               ((b1 & 0xFF) <<  8) | \
+               ((b0 & 0xFF)      )
+
+    cdef int makeInt(self, unsigned char b3, unsigned char b2,
+                     unsigned char b1, unsigned char b0):
+        return ((b3       ) << 24) | \
+               ((b2 & 0xFF) << 16) | \
+               ((b1 & 0xFF) <<  8) | \
+               ((b0 & 0xFF)      )
+
+    cdef short makeShort(self, unsigned char b1, unsigned char b0):
+        return (b1 << 8) | (b0 & 0xFF)
+
+cdef class Buffer(Bits):
+
+    def __init__(self, capacity):
+        self._position = 0
+        self._limit = 0
+        self._capacity = capacity
+        self._order = ByteOrder.BIG_ENDIAN
+
+    def __len__(self):
+        return self._capacity
+
+    def putBytes(self, src):
+        return self.putOffset(src, 0, len(src))
+
+    def putOffset(self, src, int offset, int length):
+        cdef int rem, i, n
+
+        assert self.checkBounds(offset, length, len(src))
+        assert self._position <= self._limit
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        if length > rem:
+            raise Exception
+
+        for i, n in enumerate(range(offset, offset + length)):
+            self[self._position + n] = src[i]
+
+        self._position += length
+
+        return self
+
+    cpdef long getLong(self):
+        cdef int pos = self.nextGetIndex(1 << 3)
+        if self._order == ByteOrder.BIG_ENDIAN:
+            return self.makeLong(self[pos    ], self[pos + 1],
+                                 self[pos + 2], self[pos + 3],
+                                 self[pos + 4], self[pos + 5],
+                                 self[pos + 6], self[pos + 7])
+        elif self._order == ByteOrder.LITTLE_ENDIAN:
+            return self.makeLong(self[pos + 7], self[pos + 6],
+                                 self[pos + 5], self[pos + 4],
+                                 self[pos + 3], self[pos + 2],
+                                 self[pos + 1], self[pos    ])
+
+    cpdef int getInt(self):
+        cdef int pos = self.nextGetIndex(1 << 2)
+        if self._order == ByteOrder.BIG_ENDIAN:
+            return self.makeInt(self[pos    ], self[pos + 1],
+                                self[pos + 2], self[pos + 3])
+        elif self._order == ByteOrder.LITTLE_ENDIAN:
+            return self.makeInt(self[pos + 3], self[pos + 2],
+                                self[pos + 1], self[pos    ])
+
+    cpdef short getShort(self):
+        cdef int pos = self.nextGetIndex(1 << 1)
+        if self._order == ByteOrder.BIG_ENDIAN:
+            return self.makeShort(self[pos    ], self[pos + 1])
+        elif self._order == ByteOrder.LITTLE_ENDIAN:
+            return self.makeShort(self[pos + 1], self[pos    ])
+
+    cpdef double getDouble(self):
+        cdef long value
+        cdef double dValue
+        cdef double* dptr
+        cdef int pos = self.nextGetIndex(1 << 3)
+        if self._order == ByteOrder.BIG_ENDIAN:
+            value = self.makeLong(self[pos    ], self[pos + 1],
+                                  self[pos + 2], self[pos + 3],
+                                  self[pos + 4], self[pos + 5],
+                                  self[pos + 6], self[pos + 7])
+        elif self._order == ByteOrder.LITTLE_ENDIAN:
+            value = self.makeLong(self[pos + 7], self[pos + 6],
+                                  self[pos + 5], self[pos + 4],
+                                  self[pos + 3], self[pos + 2],
+                                  self[pos + 1], self[pos    ])
+
+        dptr = <double*>&value
+        dValue = dptr[0]
+        return dValue
+
+    cpdef float getFloat(self):
+        cdef int pos, value
+        cdef float fValue
+        cdef float* fptr
+
+        pos = self.nextGetIndex(1 << 2)
+        if self._order == ByteOrder.BIG_ENDIAN:
+            value = self.makeInt(self[pos    ], self[pos + 1],
+                                 self[pos + 2], self[pos + 3])
+        elif self._order == ByteOrder.LITTLE_ENDIAN:
+            value = self.makeInt(self[pos + 3], self[pos + 2],
+                                 self[pos + 1], self[pos    ])
+
+        fptr = <float*>&value
+        fValue = fptr[0]
+        return fValue
+
+    cpdef order(self, bint order):
+        self._order = order
+
+    cpdef flip(self):
+        self._limit = self._position
+        self._position = 0
+        return self
+
+    cpdef limit(self, int limit):
+        if limit < 0 or limit > self._capacity:
+            return self
+
+        self._limit = limit
+        if self._position > limit:
+            self._position = limit
+
+        return self
+
+    cpdef position(self, int position=-1):
+        if position == -1:
+            return self._position
+        if position < 0 or position >= self._capacity:
+            raise Exception
+        if position > self._limit:
+            raise Exception
+
+        self._position = position
+        return self
+
+    cpdef remaining(self):
+        return self._limit - self._position
+
+    cpdef clear(self):
+        self._position = 0
+        self._limit = self._capacity
+        return self
+
+    cpdef capacity(self):
+        return self._capacity
+
+    cpdef compact(self):
+        assert self._position <= self._limit
+
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        self[:rem] = self[self._position:self._position + rem]
+
+        self._position = rem
+        self._limit = self._capacity
+
+        return self
+
+    cdef int __nextIndex(self, int nb=-1):
+        if nb != -1:
+            if self._limit - self._position < nb:
+                raise Exception
+        elif self._position >= self._limit:
+            raise Exception
+
+        if nb == -1:
+            nb = 1
+
+        p = self._position
+        self._position += nb
+        return p
+
+    cdef int nextGetIndex(self, int nb=-1): return self.__nextIndex(nb)
+    cdef int nextPutIndex(self, int nb=-1): return self.__nextIndex(nb)
+
+    cdef int checkIndex(self, int i):
+        if i < 0 or i >= self._limit:
+            raise Exception
+
+        return i
+
+    cdef bint checkBounds(self, int off, int length, int size):
+        if (off | length | (off + length) | (size - (off + length))) < 0:
+            raise Exception
+
+        return True
+
+cdef class ByteBuffer(Buffer):
+
+    def __init__(self, capacity):
+        Buffer.__init__(self, capacity)
+        self._array = np.zeros(capacity, dtype=np.ubyte)
+
+    def __setitem__(self, key, value):
+        cdef int i, k, idx
+        if isinstance(key, slice):
+            indices = range(*key.indices(self._capacity))
+            if len(indices) != len(value):
+                raise ValueError('Slice assignment size does not match value size')
+
+            for i, idx in enumerate(indices):
+                self._array[idx] = value[i]
+        elif isinstance(key, int):
+            k = key
+            if k < 0 or k >= self._capacity:
+                raise IndexError
+
+            self._array[k] = <unsigned char>(value & 0xFF)
+
+    def __getitem__(self, key):
+        cdef int i, k
+        if isinstance(key, slice):
+            return [self._array[i] for i in range(*key.indices(self._capacity))]
+        elif isinstance(key, int):
+            k = key
+            if k < 0 or k >= self._capacity:
+                raise IndexError
+
+            return self._array[k]
+
+    cpdef inline put(self, unsigned char value):
+        self[self.nextPutIndex()] = value
+        return self
+
+    cdef inline putIntB(self, int bi, int x):
+        self._array[bi + 3] = <char>(x >> 24)
+        self._array[bi + 2] = <char>(x >> 16)
+        self._array[bi + 1] = <char>(x >> 8)
+        self._array[bi    ] = <char>x
+
+    cdef inline putFloatB(self, int bi, float x):
+        self.putIntB(bi, floatToRawIntBits(x))
+
+    cpdef inline unsigned char get(self):
+        return self[self.nextGetIndex()]
+
+    cpdef inline unsigned char getAt(self, int idx):
+        return self[self.checkIndex(idx)]
+
+    def getBytes(self, b):
+        cdef int rem
+
+        assert self.checkBounds(0, len(b), len(b))
+        assert self._position <= self._limit
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        if len(b) > rem:
+            raise Exception
+
+        sliced = self[self._position:self._position + len(b)]
+        b[:] = [<unsigned char>e for e in sliced]
+
+        self._position += len(b)
+        return self
+
+    cdef inline __getDataPtr(self):
+        if not self.__dataPtr or self._position != self.__lastPos:
+            self.__dataPtr = np.asarray(self._array)[self._position:].ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte))
+            self.__lastPos = self._position
+
+        return self.__dataPtr
+
+    def glTexImage2D(self, int target, int level, int internalformat,
+                     int width, int height, int border, int format,
+                     int type):
+        gl.glTexImage2D(target, level, internalformat, width, height,
+                        border, format, type, self.__getDataPtr())
+
+    def glTexSubImage2D(self, int target, int level, int xoffset, int yoffset,
+                        int width, int height, int format, int type):
+        gl.glTexSubImage2D(target, level, xoffset, yoffset, width, height,
+                           format, type, self.__getDataPtr())
+
+    def glReadPixels(self, int x, int y, int width, int height, int format, int type):
+        gl.glReadPixels(x, y, width, height, format, type, self.__getDataPtr())
+
+    def glColorPointer(self, int size, int stride):
+        gl.glColorPointer(size, gl.GL_UNSIGNED_BYTE, stride, self.__getDataPtr())
+
+    def glBufferDataARB(self, int target, int usage):
+        gl.glBufferDataARB(target, self.capacity(), self.__getDataPtr(), usage)
+
+    cdef IntBuffer asIntBuffer(self):
+        cdef int size = self.remaining() >> 2
+        return ByteBufferAsIntBuffer(self, -1, 0, size, size, self.position())
+
+    cdef FloatBuffer asFloatBuffer(self):
+        cdef int size = self.remaining() >> 2
+        return ByteBufferAsFloatBuffer(self, -1, 0, size, size, self.position())
+
+cdef class IntBuffer(Buffer):
+
+    def __init__(self, capacity):
+        Buffer.__init__(self, capacity)
+        self.__array = np.zeros(capacity, dtype=np.int32)
+
+    def __setitem__(self, key, value):
+        cdef int i, k, idx
+        if isinstance(key, slice):
+            indices = range(*key.indices(self._capacity))
+            if len(indices) != len(value):
+                raise ValueError('Slice assignment size does not match value size')
+
+            for i, idx in enumerate(indices):
+                self.__array[idx] = value[i]
+        elif isinstance(key, int):
+            k = key
+            if k < 0 or k >= self._capacity:
+                raise IndexError
+
+            self.__array[k] = value
+
+    def __getitem__(self, key):
+        cdef int i, k
+        if isinstance(key, slice):
+            return [self.__array[i] for i in range(*key.indices(self._capacity))]
+        elif isinstance(key, int):
+            k = key
+            if k < 0 or k >= self._capacity:
+                raise IndexError
+
+            return self.__array[k]
+
+    cpdef put(self, int value):
+        self.__array[self.nextPutIndex()] = value
+        return self
+
+    cdef putInts(self, int[:] src, int offset, int length):
+        cdef int i, rem
+
+        assert self.checkBounds(offset, length, length)
+        assert self._position <= self._limit
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        if length > rem:
+            raise Exception
+
+        for i in range(offset, offset + length):
+            self.put(src[i])
+
+        return self
+
+    cpdef int get(self):
+        return self[self.nextGetIndex()]
+
+    cpdef int getAt(self, int idx):
+        return self[self.checkIndex(idx)]
+
+    cdef _getDataPtr(self):
+        if not self._dataPtr or self._position != self._lastPos:
+            self._dataPtr = np.asarray(self.__array)[self._position << 2:].ctypes.data_as(ctypes.POINTER(ctypes.c_int))
+            self._lastPos = self._position
+
+        return self._dataPtr
+
+    def glCallLists(self):
+        gl.glCallLists(self.remaining(), gl.GL_INT, self._getDataPtr())
+
+    def glDrawElements(self, int mode, int count, int type):
+        gl.glDrawElements(mode, count, type, self._getDataPtr())
+
+    def glInterleavedArrays(self, int format, int stride):
+        gl.glInterleavedArrays(format, stride, self._getDataPtr())
+
+    def glGenBuffersARB(self):
+        gl.glGenBuffersARB(self._getDataPtr())
+
+    def glGenQueriesARB(self):
+        return gl.glGenQueriesARB(
+            1, np.asarray(self.__array).ctypes.data_as(ctypes.POINTER(ctypes.c_uint))
+        )
+
+    def glGetInteger(self, int opt):
+        return gl.glGetIntegerv(gl.GL_QUERY_COUNTER_BITS, self._getDataPtr())
+
+    def glGetQueryObjectivARB(self, int id, int pname):
+        gl.glGetQueryObjectivARB(id, pname, self._getDataPtr())
+
+cdef class FloatBuffer(Buffer):
+
+    def __init__(self, capacity):
+        Buffer.__init__(self, capacity)
+        self.__array = np.zeros(capacity, dtype=np.float32)
+
+    def __setitem__(self, key, value):
+        cdef int i, k, idx
+        if isinstance(key, slice):
+            indices = range(*key.indices(self._capacity))
+            if len(indices) != len(value):
+                raise ValueError('Slice assignment size does not match value size')
+
+            for i, idx in enumerate(indices):
+                self.__array[idx] = value[i]
+        elif isinstance(key, int):
+            k = key
+            if k < 0 or k >= self._capacity:
+                raise IndexError
+
+            self.__array[k] = value
+
+    def __getitem__(self, key):
+        cdef int i, k
+        if isinstance(key, slice):
+            return [self.__array[i] for i in range(*key.indices(self._capacity))]
+        elif isinstance(key, int):
+            k = key
+            if k < 0 or k >= self._capacity:
+                raise IndexError
+
+            return self.__array[k]
+
+    cpdef put(self, float value):
+        self.__array[self.nextPutIndex()] = value
+        return self
+
+    cdef putFloats(self, float* src, int offset, int length):
+        cdef int i, rem
+
+        assert self.checkBounds(offset, length, length)
+        assert self._position <= self._limit
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        if length > rem:
+            raise Exception
+
+        for i in range(offset, offset + length):
+            self.put(src[i])
+
+        return self
+
+    cpdef float get(self):
+        return self[self.nextGetIndex()]
+
+    cpdef float getAt(self, int idx):
+        return self[self.checkIndex(idx)]
+
+    def getBytes(self, b):
+        cdef int rem
+
+        assert self.checkBounds(0, len(b), len(b))
+        assert self._position <= self._limit
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        if len(b) > rem:
+            raise Exception
+
+        sliced = self[self._position:self._position + len(b)]
+        b[:] = [<float>e for e in sliced]
+
+        self._position += len(b)
+        return self
+
+    cdef getFloats(self, float* array, int size):
+        cdef int rem, i
+
+        assert self.checkBounds(0, size, size)
+        assert self._position <= self._limit
+        rem = self._limit - self._position if self._position <= self._limit else 0
+        if size > rem:
+            raise Exception
+
+        cdef float* src = &self.__array[self._position]
+        memcpy(array, src, size * sizeof(float))
+
+        self._position += size
+        return self
+
+    cdef _getDataPtr(self):
+        if not self._dataPtr or self._position != self._lastPos:
+            self._dataPtr = np.asarray(self.__array)[self._position << 2:].ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            self._lastPos = self._position
+
+        return self._dataPtr
+
+    def glFogfv(self, int pname):
+        gl.glFogfv(pname, self._getDataPtr())
+
+    def glLightfv(self, int light, int pname):
+        gl.glLightfv(light, pname, self._getDataPtr())
+
+    def glLightModelfv(self, int pname):
+        gl.glLightModelfv(pname, self._getDataPtr())
+
+    def glVertexPointer(self, int size, int stride):
+        gl.glVertexPointer(size, gl.GL_FLOAT, stride, self._getDataPtr())
+
+    def glNormalPointer(self, int stride):
+        gl.glNormalPointer(gl.GL_FLOAT, stride, self._getDataPtr())
+
+    def glTexCoordPointer(self, int size, int stride):
+        gl.glTexCoordPointer(size, gl.GL_FLOAT, stride, self._getDataPtr())
+
+    def glMultMatrix(self):
+        gl.glMultMatrixf(self._getDataPtr())
+
+cdef class ByteBufferAsIntBuffer(IntBuffer):
+
+    def __init__(self, ByteBuffer bb, int mark, int pos, int lim, int cap, int off):
+        IntBuffer.__init__(self, cap)
+        self.limit(lim)
+        self.position(pos)
+        self._bb = bb
+        self._offset = off
+
+    cpdef put(self, int value):
+        self._bb.putIntB((self.nextPutIndex() << 2) + self._offset, value)
+
+    cdef _getDataPtr(self):
+        if not self._dataPtr or self._position != self._lastPos:
+            self._dataPtr = np.asarray(self._bb._array)[self._position << 2:].ctypes.data_as(ctypes.POINTER(ctypes.c_int))
+            self._lastPos = self._position
+
+        return self._dataPtr
+
+cdef class ByteBufferAsFloatBuffer(FloatBuffer):
+
+    def __init__(self, ByteBuffer bb, int mark, int pos, int lim, int cap, int off):
+        FloatBuffer.__init__(self, cap)
+        self.limit(lim)
+        self.position(pos)
+        self._bb = bb
+        self._offset = off
+
+    cpdef put(self, float value):
+        self._bb.putFloatB((self.nextPutIndex() << 2) + self._offset, value)
+
+    cdef _getDataPtr(self):
+        if not self._dataPtr or self._position != self._lastPos:
+            self._dataPtr = np.asarray(self._bb._array)[self._position << 2:].ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            self._lastPos = self._position
+
+        return self._dataPtr
+
+cdef class BufferUtils:
+
+    @staticmethod
+    def wrapByteBuffer(byteArray):
+        return ByteBuffer(len(byteArray)).clear().putBytes(byteArray).clear()
+
+    @staticmethod
+    def createByteBuffer(capacity):
+        return ByteBuffer(capacity).clear()
+
+    @staticmethod
+    def createIntBuffer(capacity):
+        return IntBuffer(capacity).clear()
+
+    @staticmethod
+    def createFloatBuffer(capacity):
+        return FloatBuffer(capacity).clear()
