@@ -17,16 +17,32 @@ cdef class RenderGlobal:
         IntBuffer __renderIntBuffer
         Tessellator __t
 
-        list __worldRenderersToUpdate
+        object __worldRenderersToUpdate
         list __sortedWorldRenderers
         list __worldRenderers
+        list __visibleRenderers
 
-        RenderBlocks __globalRenderBlocks
+        object __globalRenderBlocks
 
         IntBuffer __glOcclusionQueryBase
         bint __occlusionEnabled
 
         int __cloudOffsetX
+
+        int __skyQuadList
+        int __cloudQuadList
+        float __skyCacheR
+        float __skyCacheG
+        float __skyCacheB
+        int __skyWidth
+        int __skyHeight
+        int __cloudGeomList
+        int __cloudGeomWidth
+        int __cloudGeomHeight
+        float __prevFrustumPitch
+        float __prevFrustumYaw
+        float __prevFrustumX
+        float __prevFrustumZ
 
         int __glSkyList
 

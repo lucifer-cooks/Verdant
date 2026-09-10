@@ -42,14 +42,31 @@ class GuiMainMenu(GuiScreen):
             'NP is not in P!', 'Notch <3 Ez!', 'Music by C418!'
         )
         self.__currentSplash = self.__splashes[int(random() * len(self.__splashes))]
+        from verdant.menu.screen import VerdantMainMenu
+        self._verdant_menu = VerdantMainMenu()
 
     def updateScreen(self):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_menu.width = self.width
+            self._verdant_menu.height = self.height
+            self._verdant_menu.updateScreen()
+            return
         self.__updateCounter += 0.01
 
     def _keyTyped(self, key, char, motion):
-        pass
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_menu._keyTyped(key, char, motion)
+            return
 
     def initGui(self):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_menu.setWorldAndResolution(self.mc, self.width, self.height)
+            self._controlList = self._verdant_menu._controlList
+            return
+
         self._controlList.clear()
         self._controlList.append(GuiButton(1, self.width // 2 - 100,
                                            self.height // 4 + 48, 'Generate new level...'))
@@ -64,6 +81,12 @@ class GuiMainMenu(GuiScreen):
             self._controlList[1].enabled = False
 
     def _actionPerformed(self, button):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_menu.mc = self.mc
+            self._verdant_menu._actionPerformed(button)
+            return
+
         if button.id == 0:
             self.mc.displayGuiScreen(GuiOptions(self, self.mc.options))
         elif button.id == 1:
@@ -72,6 +95,15 @@ class GuiMainMenu(GuiScreen):
             self.mc.displayGuiScreen(GuiLoadLevel(self))
 
     def drawScreen(self, xm, ym, renderPartialTicks):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_menu.width = self.width
+            self._verdant_menu.height = self.height
+            self._verdant_menu._fontRenderer = self._fontRenderer
+            self._verdant_menu.mc = self.mc
+            self._verdant_menu.drawScreen(xm, ym, renderPartialTicks)
+            return
+
         self.drawDefaultBackground()
         t = tessellator
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.mc.renderEngine.getTexture('gui/logo.png'))

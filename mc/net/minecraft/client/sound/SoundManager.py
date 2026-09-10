@@ -63,17 +63,37 @@ class SoundManager:
         self.__options.music = music
         self.__options.saveOptions()
 
-        for root, dirs, files in os.walk(os.path.join(pyglet.resource.get_script_home(), os.path.sep.join(pyglet.resource.path))):
-            for fileName in files:
-                if fileName[-4:] != '.ogg':
-                    continue
+        script_home = pyglet.resource.get_script_home()
+        visited_dirs = set()
+        candidate_paths = [
+            os.path.abspath('resources'),
+            os.path.abspath('mc/resources'),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'resources')),
+        ]
+        for res_path in list(pyglet.resource.path):
+            candidate_paths.append(res_path if os.path.isabs(res_path) else os.path.normpath(os.path.join(script_home, res_path)))
 
-                folder = os.path.basename(root)
-                if folder == 'music':
-                    self.addMusic(fileName, os.path.join(root, fileName))
-                else:
-                    self.addSound(os.path.join(folder, fileName).replace('\\', '/'),
-                                  os.path.join(root, fileName))
+        for search_dir in candidate_paths:
+            if not os.path.isdir(search_dir) or search_dir in visited_dirs:
+                continue
+            visited_dirs.add(search_dir)
+
+            for root, dirs, files in os.walk(search_dir):
+                for fileName in files:
+                    if fileName[-4:] != '.ogg':
+                        continue
+
+                    folder = os.path.basename(root)
+                    full_file_path = os.path.join(root, fileName)
+                    if folder == 'music':
+                        self.addMusic(fileName, full_file_path)
+                    else:
+                        rel_path = os.path.relpath(full_file_path, search_dir).replace('\\', '/')
+                        if rel_path.startswith('newsound/'):
+                            rel_sound_key = rel_path[9:]
+                        else:
+                            rel_sound_key = os.path.join(folder, fileName).replace('\\', '/')
+                        self.addSound(rel_sound_key, full_file_path)
 
         try:
             from verdant.assets.audio import AudioRedirectionManager
@@ -109,12 +129,17 @@ class SoundManager:
         self.__soundPoolMusic.addSound(music, file)
 
     def playRandomMusicIfReady(self, x, y, z):
-        if not self.__options.music or not self.__loaded:
+        if not hasattr(self, '_SoundManager__options') or not self.__options or not self.__options.music or not self.__loaded:
             return
 
         if not self.__musicStream or not self.__musicStream._source:
             entry = self.__soundPoolMusic.getRandomSoundFromSoundPool('calm')
-            self.__musicStream = pyglet.media.load(entry.soundUrl).play()
+            if not entry or not getattr(entry, 'soundUrl', None):
+                return
+            try:
+                self.__musicStream = pyglet.media.load(entry.soundUrl).play()
+            except Exception:
+                self.__musicStream = None
 
     def setListener(self, listener, partialTick):
         if not self.__loaded or not self.__options.sound or not listener:

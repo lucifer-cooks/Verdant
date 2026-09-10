@@ -48,6 +48,8 @@ class EntityRenderer:
     def __init__(self, minecraft):
         self.__mc = minecraft
         self.itemRenderer = ItemRenderer(self.__mc)
+        self.__cachedFrustum = Frustum()
+
 
     def updateRenderer(self):
         self.__prevFogColor = self.__fogColor
@@ -257,7 +259,7 @@ class EntityRenderer:
         reach = self.__mc.playerController.getBlockReachDistance()
         vec2 = rotVec.addVector(xy * reach, x2 * reach, y1 * reach)
         self.__mc.objectMouseOver = self.__mc.theWorld.rayTraceBlocks(rotVec, vec2)
-        vec = self.__orientCamera(alpha)
+        vec = rotVec
         if self.__mc.objectMouseOver:
             reach = self.__mc.objectMouseOver.hitVec.distanceTo(vec)
 
@@ -266,8 +268,7 @@ class EntityRenderer:
         else:
             reach = min(reach, 3.0)
 
-        vec = self.__orientCamera(alpha)
-        vec2 = vec.addVector(xy * reach, x2 * reach, y1 * reach)
+        vec2 = rotVec.addVector(xy * reach, x2 * reach, y1 * reach)
         self.__pointedEntity = None
         entities = self.__mc.theWorld.entityMap.getEntitiesWithinAABB(
             self.__mc.thePlayer, self.__mc.thePlayer.boundingBox.addCoord(
@@ -380,7 +381,7 @@ class EntityRenderer:
             )
             gl.glTranslatef(-xd, -yd, -zd)
 
-            frustum = Frustum().init()
+            frustum = self.__cachedFrustum.init()
 
             self.__setupFog()
             gl.glEnable(gl.GL_FOG)

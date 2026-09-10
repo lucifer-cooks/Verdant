@@ -18,11 +18,12 @@ class SoundPool:
                 self.__nameToSoundPoolEntriesMapping[sound] = []
 
             entry = SoundPoolEntry(soundUrl, file)
-            self.__nameToSoundPoolEntriesMapping[sound].append(entry)
-            self.__numberOfSoundPoolEntries += 1
+            if entry.stream is not None or file:
+                self.__nameToSoundPoolEntriesMapping[sound].append(entry)
+                self.__numberOfSoundPoolEntries += 1
             return entry
-        except Exception as e:
-            raise RuntimeError(e)
+        except Exception:
+            return None
 
     def getRandomSoundFromSoundPool(self, name):
         entries = self.__nameToSoundPoolEntriesMapping.get(name)

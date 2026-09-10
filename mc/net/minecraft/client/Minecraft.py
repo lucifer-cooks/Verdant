@@ -22,7 +22,8 @@ if pyglet.compat_platform == 'win32':
 
     pyglet.lib.load_library = load_library
 
-pyglet.resource.path = ['../../../resources']
+_mc_res_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'resources'))
+pyglet.resource.path = ['../../../resources', _mc_res_dir, 'mc/resources']
 pyglet.resource.reindex()
 
 from mc.net.minecraft.client import MinecraftError
@@ -84,7 +85,7 @@ import gc
 GL_DEBUG = False
 
 class Minecraft(window.Window):
-    VERSION_STRING = 'Minecraft Indev'
+    VERSION_STRING = 'VERDANT Alpha'
     theWorld = None
     renderGlobal = None
     thePlayer = None
@@ -335,7 +336,7 @@ class Minecraft(window.Window):
 
     def on_draw(self):
         try:
-            if self.theWorld:
+            if self.theWorld and self._Minecraft__ticksRan % 2 == 0:
                 self.theWorld.updateLighting()
 
             if self.isGamePaused:
@@ -666,34 +667,64 @@ class Minecraft(window.Window):
         if not self.isGamePaused:
             self.effectRenderer.updateEffects()
 
-        if self.verdant_world_state is not None:
+        if self.verdant_world_state is not None and self._Minecraft__ticksRan % 4 == 0:
             self.verdant_world_state.bind_world(self.theWorld)
             self.verdant_query.bind_world(self.theWorld)
             self.verdant_clock.set_world_state(self.verdant_world_state)
-            self.verdant_manager.update(context={'world': self.theWorld}, delta_ticks=1)
+            self.verdant_manager.update(context={'world': self.theWorld}, delta_ticks=4)
 
         VerdantHooks.after_world_tick(self.theWorld) if self.theWorld else None
 
-    def generateLevel(self, size, shape, levelType, theme):
+    def generateLevel(self, size, shape, levelType, theme, seed=None):
         VerdantHooks.before_world_generation(self, size, shape, levelType, theme)
-        self.setLevel(None)
-        gc.collect()
         name = self.session.username if self.session else 'anonymous'
+
+        if seed is None:
+            seed = getattr(self, "_next_world_seed", None)
+        if seed is None:
+            import random
+            seed = random.randint(10000000, 999999999)
+        self._next_world_seed = None
+
+        try:
+            from verdant.assets.theme import ThemeManager, ThemeMode
+            if ThemeManager.get_instance().mode == ThemeMode.VERDANT_ORIGINAL and levelType == 1:
+                from verdant.world.outworld import VerdantOutworldGenerator, set_world_seed
+                outworld_gen = VerdantOutworldGenerator(self.loadingScreen, seed=seed)
+                world = outworld_gen.generate(name, width=512, depth=512, height=64)
+                set_world_seed(world, seed)
+                self.setLevel(world)
+                return
+        except Exception:
+            pass
+
         levelGen = LevelGenerator(self.loadingScreen)
         levelGen.islandGen = levelType == 1
         levelGen.floatingGen = levelType == 2
         levelGen.flatGen = levelType == 3
         levelGen.levelType = theme
-        width = 128 << size
-        height = width
-        length = 64
+        
+        # Optimized world sizes for better performance
+        if size == 0:  # Small
+            width = 64
+            height = 64
+            length = 64
+        elif size == 1:  # Normal
+            width = 128
+            height = 128
+            length = 64
+        else:  # Large
+            width = 256
+            height = 256
+            length = 128
+            
         if shape == 1:
             width //= 2
             height <<= 1
         elif shape == 2:
             width //= 2
             height = width
-            length = 256
+            length = 128
 
         self.setLevel(levelGen.generate(name, width, height, length))
 
@@ -725,6 +756,14 @@ class Minecraft(window.Window):
 
             if self.effectRenderer:
                 self.effectRenderer.clearEffects(world)
+
+            try:
+                from verdant.world.outworld import get_world_seed
+                w_seed = get_world_seed(world)
+                if w_seed is not None and self.verdant_world_state is not None:
+                    self.verdant_world_state.metadata['seed'] = w_seed
+            except Exception:
+                pass
 
             self.verdant_world_state.bind_world(world)
             self.verdant_query.bind_world(world)
@@ -763,6 +802,6 @@ if __name__ == '__main__':
 
     game = Minecraft(fullscreen, creative, width=854, height=480,
                      resizable=True, vsync=False, visible=False,
-                     caption='Minecraft Indev')
+                     caption='VERDANT')
     game.session = Session(name, sessionId)
     game.run()

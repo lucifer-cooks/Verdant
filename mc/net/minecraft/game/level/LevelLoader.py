@@ -49,6 +49,12 @@ class LevelLoader:
         world.authorName = str(aboutTag.get('Author', ''))
         world.name = str(aboutTag.get('Name', ''))
         world.createTime = aboutTag.get('CreatedOn', Long(0)).real
+        if 'Seed' in aboutTag:
+            try:
+                from verdant.world.outworld import set_world_seed
+                set_world_seed(world, int(aboutTag['Seed'].real))
+            except Exception:
+                pass
         world.cloudColor = environmentTag.get('CloudColor', Int(0)).real
         world.skyColor = environmentTag.get('SkyColor', Int(0)).real
         world.fogColor = environmentTag.get('FogColor', Int(0)).real
@@ -152,6 +158,13 @@ class LevelLoader:
         aboutTag = Compound({'Author': String(world.authorName),
                              'Name': String(world.name),
                              'CreatedOn': Long(world.createTime)})
+        try:
+            from verdant.world.outworld import get_world_seed
+            seed_val = get_world_seed(world)
+            if seed_val is not None:
+                aboutTag['Seed'] = Long(int(seed_val))
+        except Exception:
+            pass
 
         if self.__guiLoading:
             self.__guiLoading.displayLoadingString('Preparing entities..')

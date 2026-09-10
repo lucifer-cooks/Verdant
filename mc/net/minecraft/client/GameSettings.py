@@ -140,7 +140,7 @@ class GameSettings:
     sound = True
     invertMouse = False
     showFPS = False
-    renderDistance = 0
+    renderDistance = 1
     viewBobbing = True
     anaglyph = False
     limitFramerate = False

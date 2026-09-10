@@ -5,4 +5,7 @@ class SoundPoolEntry:
     def __init__(self, name, url):
         self.soundName = name
         self.soundUrl = url
-        self.stream = media.load(url, streaming=False)
+        try:
+            self.stream = media.load(url, streaming=False)
+        except Exception:
+            self.stream = None

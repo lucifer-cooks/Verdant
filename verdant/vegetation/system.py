@@ -100,25 +100,33 @@ class VerdantVegetationSystem(VerdantSystem):
         ground_level = getattr(world, 'groundLevel', 32)
 
         candidates = 0
-        step = max(2, min(12, max(4, width // 12)))
+        step = max(2, min(8, max(2, width // 64)))
 
         for x in range(0, width, step):
             for z in range(0, depth, step):
                 if candidates >= max_candidates:
                     return candidates
 
-                surface_y = max(1, min(height - 2, ground_level + 1))
+                # Find actual surface block at (x, z)
+                surface_y = height - 2
+                while surface_y > 1 and world.getBlockId(x, surface_y, z) == 0:
+                    surface_y -= 1
+                surface_y += 1
+
+                if surface_y <= 1 or surface_y >= height - 2:
+                    continue
+
                 base = world.getBlockId(x, surface_y, z)
                 if base != 0:
+                    continue
+
+                below = world.getBlockId(x, surface_y - 1, z)
+                if below not in (blocks.grass.blockID, blocks.dirt.blockID, blocks.sand.blockID):
                     continue
 
                 env = self.get_environment_for(x, surface_y, z)
                 biome = self.biome_resolver.resolve(env)
                 rule = self.rules.get_rules(biome.name)
-
-                below = world.getBlockId(x, surface_y - 1, z)
-                if below not in (blocks.grass.blockID, blocks.dirt.blockID, blocks.sand.blockID):
-                    continue
 
                 if rule.tree_density > 0.0:
                     seeded = abs(self.seed_source.noise(x + 13, surface_y + 7, z + 21))

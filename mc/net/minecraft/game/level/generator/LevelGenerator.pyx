@@ -16,6 +16,7 @@ from mc.net.minecraft.game.level.block.Blocks import blocks
 from mc.net.minecraft.game.level.generator.noise.NoiseGeneratorDistort cimport NoiseGeneratorDistort
 from mc.net.minecraft.game.level.generator.noise.NoiseGeneratorOctaves cimport NoiseGeneratorOctaves
 from mc.JavaUtils cimport Random, getMillis, signum
+from mc.net.minecraft.game.level.generator.BiomeGenerator import BiomeGenerator
 
 @cython.final
 cdef class LevelGenerator:
@@ -38,6 +39,7 @@ cdef class LevelGenerator:
     def __cinit__(self):
         self.__rand = Random()
         self.__floodFillBlocks = np.zeros(1048576, dtype=np.int32)
+        self.__biome_generator = None
 
     def __init__(self, guiLoading):
         self.__guiLoading = guiLoading
@@ -69,6 +71,9 @@ cdef class LevelGenerator:
         self.__depth = depth
         self.__height = height
         self.__blocksByteArray = <char*>malloc(sizeof(char) * (width * depth * height))
+        
+        # Initialize biome generator
+        self.__biome_generator = BiomeGenerator(self.__rand.nextInt())
 
         for i in range(iterations):
             self.__waterLevel = self.__height - 32 - i * 48
@@ -178,13 +183,14 @@ cdef class LevelGenerator:
 
         self.__guiLoading.displayLoadingString('Carving..')
 
-        count = w * h * d // 256 // 64 << 1
+        # Optimized cave generation - reduce count for better performance
+        count = w * h * d // 512 // 64  # Reduced from //256//64<<1
         stone = <int>blocks.stone.blockID
         for _ in range(count):
             x = self.__rand.nextFloat() * w
             y = self.__rand.nextFloat() * h
             z = self.__rand.nextFloat() * d
-            length = <int>((self.__rand.nextFloat() + self.__rand.nextFloat()) * 200.0)
+            length = <int>((self.__rand.nextFloat() + self.__rand.nextFloat()) * 100.0)  # Reduced from 200.0
             dir1 = self.__rand.nextFloat() * pi * 2.0
             dira1 = 0.0
             dir2 = self.__rand.nextFloat() * pi * 2.0
@@ -226,10 +232,11 @@ cdef class LevelGenerator:
                                     if self.__blocksByteArray[blockId] == stone:
                                         self.__blocksByteArray[blockId] = 0
 
-        coal = self.__populateOre(blocks.oreCoal.blockID, 1000, 10, (h << 2) // 5)
-        iron = self.__populateOre(blocks.oreIron.blockID, 800, 8, h * 3 // 5)
-        gold = self.__populateOre(blocks.oreGold.blockID, 500, 6, (h << 1) // 5)
-        diamonds = self.__populateOre(blocks.oreDiamond.blockID, 800, 4, h // 5)
+        # Optimized ore generation - reduced frequencies for better performance
+        coal = self.__populateOre(blocks.oreCoal.blockID, 500, 8, (h << 2) // 5)  # Reduced from 1000, 10
+        iron = self.__populateOre(blocks.oreIron.blockID, 400, 6, h * 3 // 5)    # Reduced from 800, 8
+        gold = self.__populateOre(blocks.oreGold.blockID, 250, 4, (h << 1) // 5) # Reduced from 500, 6
+        diamonds = self.__populateOre(blocks.oreDiamond.blockID, 400, 3, h // 5)  # Reduced from 800, 4
         print(f'Coal: {coal}, Iron: {iron}, Gold: {gold}, Diamond: {diamonds}')
 
         self.__guiLoading.displayLoadingString('Melting..')
@@ -321,12 +328,13 @@ cdef class LevelGenerator:
             pass
 
         self.__guiLoading.displayLoadingString('Lighting..')
-        for i in range(10000):
+        # Optimized lighting updates
+        for i in range(3000):  # Reduced from 10000
             world.updateLighting()
 
         self.__guiLoading.displayLoadingString('Spawning..')
         spawner = MobSpawner(world)
-        for i in range(1000):
+        for i in range(200):  # Reduced from 1000
             spawner.performSpawning()
 
         world.createTime = getMillis()
@@ -419,16 +427,17 @@ cdef class LevelGenerator:
     cdef __growTrees(self, World world):
         cdef int size, xx, x, y, z, yy, width, height, depth, zz
 
-        size = self.__width * self.__depth * self.__height // 80000
+        # Optimized tree generation - reduced density
+        size = self.__width * self.__depth * self.__height // 160000  # Reduced from //80000
         for xx in range(size):
             width = self.__rand.nextInt(self.__width)
             height = self.__rand.nextInt(self.__height)
             depth = self.__rand.nextInt(self.__depth)
-            for yy in range(25):
+            for yy in range(10):  # Reduced from 25
                 x = width
                 y = height
                 z = depth
-                for zz in range(20):
+                for zz in range(8):  # Reduced from 20
                     x += self.__rand.nextInt(12) - self.__rand.nextInt(12)
                     y += self.__rand.nextInt(3) - self.__rand.nextInt(6)
                     z += self.__rand.nextInt(12) - self.__rand.nextInt(12)

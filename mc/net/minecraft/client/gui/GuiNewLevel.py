@@ -14,8 +14,39 @@ class GuiNewLevel(GuiScreen):
         self.__selectedWorldShape = 0
         self.__selectedWorldSize = 1
         self.__selectedWorldTheme = 0
+        from verdant.menu.new_world import VerdantCreateWorldScreen
+        self._verdant_screen = VerdantCreateWorldScreen(screen)
+
+    def updateScreen(self):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_screen.width = self.width
+            self._verdant_screen.height = self.height
+            self._verdant_screen.updateScreen()
+            return
+
+    def _mouseClicked(self, xm, ym, button):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_screen.mc = self.mc
+            self._verdant_screen._mouseClicked(xm, ym, button)
+            return
+        super()._mouseClicked(xm, ym, button)
+
+    def _keyTyped(self, key, char, motion):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_screen.mc = self.mc
+            self._verdant_screen._keyTyped(key, char, motion)
+            return
 
     def initGui(self):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_screen.setWorldAndResolution(self.mc, self.width, self.height)
+            self._controlList = self._verdant_screen._controlList
+            return
+
         self._controlList.clear()
         self._controlList.append(GuiButton(0, self.width // 2 - 100,
                                            self.height // 4, 'Type: '))
@@ -38,6 +69,12 @@ class GuiNewLevel(GuiScreen):
         self._controlList[3].displayString = 'Theme: ' + self.__worldTheme[self.__selectedWorldTheme]
 
     def _actionPerformed(self, button):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_screen.mc = self.mc
+            self._verdant_screen._actionPerformed(button)
+            return
+
         if button.id == 5:
             self.mc.displayGuiScreen(self.__prevGui)
         elif button.id == 4:
@@ -56,6 +93,15 @@ class GuiNewLevel(GuiScreen):
         self.__worldOptions()
 
     def drawScreen(self, xm, ym, renderPartialTicks):
+        from verdant.assets.theme import ThemeManager
+        if not ThemeManager.get_instance().is_classic:
+            self._verdant_screen.width = self.width
+            self._verdant_screen.height = self.height
+            self._verdant_screen._fontRenderer = self._fontRenderer
+            self._verdant_screen.mc = self.mc
+            self._verdant_screen.drawScreen(xm, ym, renderPartialTicks)
+            return
+
         self.drawDefaultBackground()
         self.drawCenteredString(self._fontRenderer, 'Generate new level',
                                 self.width // 2, 40, 0xFFFFFF)
