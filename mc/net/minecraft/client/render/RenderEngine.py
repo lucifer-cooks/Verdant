@@ -17,6 +17,13 @@ class RenderEngine:
         self.__urlToImageDataMap = {}
         self.__clampTexture = False
 
+    def __getTextureData(self, key):
+        try:
+            from verdant.assets.textures import resolve_texture_data
+            return resolve_texture_data(key)
+        except Exception:
+            return Resources.textures[key]
+
     def getTexture(self, resourceName):
         if resourceName in self.__textureMap:
             return self.__textureMap[resourceName]
@@ -25,14 +32,14 @@ class RenderEngine:
             id_ = self.__singleIntBuffer.value
             if resourceName.startswith('##'):
                 self.__setupTexture(RenderEngine.__unwrapImageByColumns(
-                        Resources.textures[resourceName[3:]]
+                        self.__getTextureData(resourceName[3:])
                     ), id_)
             if resourceName.startswith('%%'):
                 self.__clampTexture = True
-                self.__setupTexture(Resources.textures[resourceName[3:]], id_)
+                self.__setupTexture(self.__getTextureData(resourceName[3:]), id_)
                 self.__clampTexture = False
             else:
-                self.__setupTexture(Resources.textures[resourceName], id_)
+                self.__setupTexture(self.__getTextureData(resourceName), id_)
 
             self.__textureMap[resourceName] = id_
             return id_

@@ -61,6 +61,12 @@ class RenderManager:
         for render in self.__entityRenderMap.values():
             render.setRenderManager(self)
 
+        try:
+            from verdant.assets.creatures.mapping import install_verdant_creature_renderers
+            install_verdant_creature_renderers(self)
+        except Exception:
+            pass
+
     def getEntityRenderObject(self, entity):
         render = self.__entityRenderMap.get(entity.__class__)
         if not render and entity.__class__ != Entity:

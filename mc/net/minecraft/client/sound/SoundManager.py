@@ -75,6 +75,13 @@ class SoundManager:
                     self.addSound(os.path.join(folder, fileName).replace('\\', '/'),
                                   os.path.join(root, fileName))
 
+        try:
+            from verdant.assets.audio import AudioRedirectionManager
+            for sound_key, sound_file in AudioRedirectionManager.get_instance().discover_original_sound_files():
+                self.addSound(sound_key, str(sound_file))
+        except Exception:
+            pass
+
         clock.schedule_once(self.removeTempSources, 10)
 
     def onSoundOptionsChanged(self):
